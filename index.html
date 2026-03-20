@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TEG / GBGS / AM — Merch Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Bebas+Neue&display=swap" rel="stylesheet">
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{background:#0A0A0F;color:#fff}
+      #root{min-height:100vh}
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Load React first, synchronously -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <!-- prop-types must exist before Recharts loads -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
+    <!-- Recharts UMD — needs React + PropTypes already on window -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+    <!-- Babel last, then it finds all globals already set -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script type="text/babel" data-presets="react" src="./assets/index-84beab6a.js"></script>
+  </body>
+</html>
