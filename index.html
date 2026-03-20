@@ -1,0 +1,1035 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>TEG / GBGS / AM — Merch Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0A0A0F;color:#fff;font-family:'DM Mono',monospace}
+#root{min-height:100vh}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+tr:hover td{background:#13131F!important}
+input[type=month]::-webkit-calendar-picker-indicator{filter:invert(0.5)}
+select option{background:#1A1A2E}
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Bebas+Neue&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+const { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } = Recharts;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const PASSWORD = "teg2026";
+const DARK = "#0A0A0F", CARD = "#111118", BORDER = "#1E1E2E";
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const COLORS = ["#FF5C1A","#D4A017","#4ECDC4","#A78BFA","#F59E0B","#34D399","#F87171","#60A5FA"];
+const BRAND_CONFIG = {
+  teg:  { label:"TEG",  accent:"#E8294A" },
+  gbgs: { label:"GBGS", accent:"#7C3AED" },
+  am:   { label:"AM",   accent:"#D4A017" },
+};
+const SHEETS_URL_KEY = "teg_merch_sheets_url_v2";
+const ABBR_MAP = {
+  dc:"DC",nyc:"NYC",ny:"NY",la:"LA",sf:"SF",sc:"SC",nc:"NC",nj:"NJ",
+  tx:"TX",fl:"FL",ga:"GA",co:"CO",ca:"CA",az:"AZ",nv:"NV",ut:"UT",
+  tn:"TN",oh:"OH",il:"IL",wa:"WA",or:"OR",ma:"MA",va:"VA",md:"MD",pa:"PA",
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function titleCaseStore(str) {
+  return str.split(" ").map(w => {
+    const low = w.toLowerCase();
+    return ABBR_MAP[low] || (w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  }).join(" ");
+}
+function normalizeStore(raw) {
+  if (!raw) return "";
+  let s = raw.trim();
+  s = s.replace(/^(The Escape Game|The Escape Keys|TEG|GBGS|Great Big Game Show|Adventure Mining)\s*[-–]\s*/i, "");
+  s = s.replace(/-/g, " ");
+  s = titleCaseStore(s);
+  return s.trim();
+}
+function normalizeName(raw) {
+  if (!raw) return "";
+  let s = raw.trim();
+  s = s.replace(/^(TEG|GBGS|AM|Adventure Mining|Great Big Game Show)\s*[-–]\s*/i, "");
+  s = s.replace(/\s*[\(\[\/\-]\s*\d*\.?\s*(XS|S|M|L|XL|XXL|2XL|3XL|OSFM)\s*[\)\]]?\s*$/i, "");
+  s = s.replace(/\s+\d+\.(XS|S|M|L|XL|XXL|2XL|3XL)\s*$/i, "");
+  return s.trim();
+}
+function getRowBrand(rawName, rawStore) {
+  const n = (rawName||"").toLowerCase(), st = (rawStore||"").toLowerCase();
+  if (st.includes("gbgs")||st.includes("great big game")||n.startsWith("gbgs")||n.includes("gbgs -")) return "gbgs";
+  if (st.includes("adventure mining")||n.startsWith("am -")||n.includes("adventure mining")) return "am";
+  return "teg";
+}
+function getSheetsUrl() { try { return localStorage.getItem(SHEETS_URL_KEY)||""; } catch { return ""; } }
+function setSheetsUrl(url) { try { localStorage.setItem(SHEETS_URL_KEY,url); } catch {} }
+function getLocalData() { try { const d=localStorage.getItem("teg_merch_data_v2"); return d?JSON.parse(d):null; } catch { return null; } }
+function setLocalData(d) { try { localStorage.setItem("teg_merch_data_v2",JSON.stringify(d)); } catch {} }
+function round2(n) { return Math.round((n||0)*100)/100; }
+function formatMonthLabel(ym) {
+  if (!ym||ym==="Unknown") return "Unknown";
+  const [y,m] = ym.split("-");
+  return `${MONTHS[parseInt(m,10)-1]} ${y.slice(2)}`;
+}
+function fieldFind(headers, ...candidates) {
+  return headers.find(h => candidates.some(c => h.includes(c))) || null;
+}
+function parseFilenameCity(filename) {
+  const base = filename.replace(/\.[^.]+$/, "").toLowerCase();
+  const dateMatch = base.match(/^[^_]+_(.+?)_\d{4}-\d{2}-\d{2}/);
+  if (!dateMatch) return null;
+  const cityPart = dateMatch[1];
+  return titleCaseStore(cityPart.replace(/-/g," ").replace(/\bmix\b/gi,"").replace(/\s+/g," ").trim());
+}
+
+// ── Sheets API ────────────────────────────────────────────────────────────────
+async function sheetsGet(url, params={}) {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`${url}${qs?"?"+qs:""}`,{method:"GET"});
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  if (text.startsWith("<")) throw new Error("Got HTML — check: Execute as Me, Access: Anyone");
+  const json = JSON.parse(text);
+  if (!json.ok) throw new Error(json.error||"Unknown error");
+  return json;
+}
+async function pingSheets(url) { return sheetsGet(url,{action:"ping"}); }
+async function loadFromSheets(url) { const r=await sheetsGet(url,{action:"load"}); return r.data||null; }
+async function clearSheets(url,which) { await sheetsGet(url,{action:"clear",which:which||"all"}); }
+
+// ── CSV Parsing ───────────────────────────────────────────────────────────────
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length<2) return [];
+  const headers = lines[0].split(",").map(h=>h.trim().replace(/^\uFEFF/,"").replace(/^"|"$/g,"").toLowerCase());
+  return lines.slice(1).map(line=>{
+    const values=[]; let cur="",inQ=false;
+    for (let i=0;i<line.length;i++){
+      if(line[i]==='"'){inQ=!inQ;}else if(line[i]===","&&!inQ){values.push(cur.trim());cur="";}else cur+=line[i];
+    }
+    values.push(cur.trim());
+    return Object.fromEntries(headers.map((h,i)=>[h,(values[i]||"").replace(/^"|"$/g,"").trim()]));
+  }).filter(row=>Object.values(row).some(v=>v!==""));
+}
+
+// ── Row Processing ────────────────────────────────────────────────────────────
+function processRevelCSV(rows, filename) {
+  const headers = Object.keys(rows[0]||{});
+  const fields = {
+    name:     fieldFind(headers,"product name","item name","product","item","name","description","menu item"),
+    qty:      fieldFind(headers,"quantity","qty","units","count"),
+    total:    fieldFind(headers,"total sales inc item discounts","total sales inc","inc item discounts","total sales","subtotal","revenue","amount","sales","net"),
+    date:     fieldFind(headers,"date","created","time","order date","transaction date","closed date"),
+    store:    fieldFind(headers,"store","establishment","location","site","outlet"),
+    category: fieldFind(headers,"category","department","class","group","type"),
+  };
+  const filenameCity = parseFilenameCity(filename);
+  const uploadedAt = new Date().toISOString();
+  const result=[];
+  for (const row of rows) {
+    const rawName=fields.name?row[fields.name]||"":"";
+    const rawStore=fields.store?row[fields.store]||"":"";
+    if(!rawName) continue;
+    if(/gift/i.test(rawName)) continue;
+    const brand=getRowBrand(rawName,rawStore);
+    const name=normalizeName(rawName);
+    const storeVal=rawStore?normalizeStore(rawStore):(filenameCity||"Unknown");
+    const qty=parseFloat(fields.qty?row[fields.qty]:1)||1;
+    const total=parseFloat(fields.total?row[fields.total]:0)||0;
+    const category=fields.category?row[fields.category]||"Uncategorized":"Uncategorized";
+    let dateStr="";
+    if(fields.date&&row[fields.date]){const d=new Date(row[fields.date]);if(!isNaN(d))dateStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;}
+    result.push({src:"revel",brand,name,category,qty,total,date:dateStr,store:storeVal,uploaded_at:uploadedAt});
+  }
+  return result;
+}
+
+function processResovaCSV(rows, filename) {
+  const headers = Object.keys(rows[0]||{});
+  const fields = {
+    item:   fieldFind(headers,"inventory item","item","room","experience","activity","service","product"),
+    date:   fieldFind(headers,"date","booking date","created","start date","session date"),
+    total:  fieldFind(headers,"booking net total","net total","total","amount","price","paid","revenue","cost"),
+    status: fieldFind(headers,"payment status","status","state"),
+    qty:    fieldFind(headers,"participants","guests","players","quantity","qty","group size","people"),
+    store:  fieldFind(headers,"store","location","establishment","site","venue"),
+  };
+  const filenameCity = parseFilenameCity(filename);
+  const uploadedAt = new Date().toISOString();
+  const result=[];
+  const lastIdx=rows.length-1;
+  for (let ri=0;ri<rows.length;ri++){
+    const row=rows[ri];
+    if(ri===lastIdx){const itemVal=fields.item?row[fields.item]||"":"";if(!itemVal||/^total/i.test(itemVal))continue;}
+    const rawName=fields.item?row[fields.item]||"":"";
+    const rawStore=fields.store?row[fields.store]||"":"";
+    if(!rawName) continue;
+    if(/gift/i.test(rawName)) continue;
+    const statusVal=fields.status?row[fields.status]||"":"";
+    if(/cancelled|canceled|refunded|void/i.test(statusVal)) continue;
+    const brand=getRowBrand(rawName,rawStore);
+    const name=normalizeName(rawName);
+    const storeVal=rawStore?normalizeStore(rawStore):(filenameCity||"Unknown");
+    const qty=parseFloat(fields.qty?row[fields.qty]:1)||1;
+    const total=parseFloat(fields.total?row[fields.total]:0)||0;
+    let dateStr="";
+    if(fields.date&&row[fields.date]){const d=new Date(row[fields.date]);if(!isNaN(d))dateStr=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;}
+    result.push({src:"resova",brand,name,category:"Experience",qty,total,date:dateStr,store:storeVal,uploaded_at:uploadedAt});
+  }
+  return result;
+}
+
+function slimRow(r) { return [r.src||"",r.brand||"",r.name||"",r.category||"",r.qty||0,r.total||0,r.date||"",r.store||"",r.uploaded_at||""]; }
+function expandRow(arr) {
+  if(!Array.isArray(arr)) return {...arr,store:normalizeStore(arr.store||"")};
+  return {src:arr[0],brand:arr[1],name:arr[2],category:arr[3],qty:arr[4],total:arr[5],date:arr[6],store:normalizeStore(arr[7]),uploaded_at:arr[8]};
+}
+function expandRows(slim){if(!slim||!Array.isArray(slim))return[];return slim.map(r=>expandRow(r));}
+
+// ── Aggregation ───────────────────────────────────────────────────────────────
+function filterRows(rows, brand, stores, dateFrom, dateTo) {
+  return rows.filter(r=>{
+    if(r.brand!==brand) return false;
+    if(stores&&stores.length>0&&!stores.includes(r.store)) return false;
+    if(dateFrom&&r.date&&r.date<dateFrom) return false;
+    if(dateTo&&r.date&&r.date>dateTo) return false;
+    return true;
+  });
+}
+function aggregateRows(rows) {
+  const byProduct={},byMonth={},byStore={},byCategory={};
+  let totalRevenue=0,totalUnits=0;
+  for (const r of rows){
+    totalRevenue+=r.total||0; totalUnits+=r.qty||0;
+    const m=r.date?r.date.slice(0,7):"Unknown";
+    if(!byMonth[m])byMonth[m]={month:m,revenue:0,units:0,transactions:0};
+    byMonth[m].revenue+=r.total;byMonth[m].units+=r.qty;byMonth[m].transactions++;
+    if(!byProduct[r.name])byProduct[r.name]={name:r.name,category:r.category,units:0,revenue:0};
+    byProduct[r.name].units+=r.qty;byProduct[r.name].revenue+=r.total;
+    if(!byStore[r.store])byStore[r.store]={store:r.store,units:0,revenue:0};
+    byStore[r.store].units+=r.qty;byStore[r.store].revenue+=r.total;
+    const cat=r.category||"Uncategorized";
+    if(!byCategory[cat])byCategory[cat]={name:cat,revenue:0,units:0};
+    byCategory[cat].revenue+=r.total;byCategory[cat].units+=r.qty;
+  }
+  const monthlyRevenue=Object.values(byMonth).sort((a,b)=>a.month.localeCompare(b.month)).map(m=>({...m,label:formatMonthLabel(m.month),revenue:round2(m.revenue)}));
+  const topItems=Object.values(byProduct).map(p=>({...p,revenue:round2(p.revenue)})).sort((a,b)=>b.revenue-a.revenue);
+  const storeList=Object.values(byStore).map(s=>({...s,revenue:round2(s.revenue),avgUnit:s.units?round2(s.revenue/s.units):0})).sort((a,b)=>b.revenue-a.revenue);
+  const categories=Object.values(byCategory).map(c=>({...c,revenue:round2(c.revenue)})).sort((a,b)=>b.revenue-a.revenue);
+  return{totalRevenue:round2(totalRevenue),totalUnits:Math.round(totalUnits),monthlyRevenue,topItems,storeList,categories};
+}
+
+// ── Shared UI ─────────────────────────────────────────────────────────────────
+const Tip=({active,payload,label})=>{
+  if(!active||!payload?.length)return null;
+  return(<div style={{background:"#1A1A2E",border:`1px solid ${BORDER}`,borderRadius:8,padding:"10px 14px",fontFamily:"'DM Mono',monospace",fontSize:12}}>
+    <div style={{color:"#666",marginBottom:6}}>{label}</div>
+    {payload.map((p,i)=><div key={i} style={{color:p.color||"#fff"}}>{p.name}: {typeof p.value==="number"&&(p.name?.toLowerCase().includes("rev")||p.name?.toLowerCase().includes("total")||p.name?.toLowerCase().includes("avg"))?`$${Number(p.value).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:2})}`:p.value}</div>)}
+  </div>);
+};
+function KPICard({label,value,sub,color}){
+  return(<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:"20px 24px",position:"relative",overflow:"hidden"}}>
+    <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:color}}/>
+    <div style={{fontSize:11,color:"#555",letterSpacing:2,textTransform:"uppercase",marginBottom:10}}>{label}</div>
+    <div style={{fontSize:28,fontFamily:"'Bebas Neue',sans-serif",color:"#fff",letterSpacing:1}}>{value}</div>
+    {sub&&<div style={{fontSize:11,color:"#444",marginTop:4}}>{sub}</div>}
+  </div>);
+}
+function SortTh({label,field,sort,setSort}){
+  const active=sort.field===field;
+  return(<th onClick={()=>setSort(s=>({field,dir:s.field===field&&s.dir==="desc"?"asc":"desc"}))}
+    style={{textAlign:"left",padding:"8px 12px",color:active?"#fff":"#444",fontWeight:400,fontSize:10,letterSpacing:1,textTransform:"uppercase",cursor:"pointer",userSelect:"none"}}>
+    {label} {active?(sort.dir==="desc"?"▼":"▲"):<span style={{opacity:0.3}}>↕</span>}
+  </th>);
+}
+function sortedItems(items,sort){
+  return [...items].sort((a,b)=>{const av=a[sort.field],bv=b[sort.field];if(typeof av==="string")return sort.dir==="asc"?av.localeCompare(bv):bv.localeCompare(av);return sort.dir==="asc"?av-bv:bv-av;});
+}
+
+// ── Password Gate ─────────────────────────────────────────────────────────────
+function PasswordGate({onUnlock}){
+  const[pw,setPw]=useState(""),[ err,setErr]=useState(false),[shake,setShake]=useState(false);
+  const submit=()=>{if(pw===PASSWORD)onUnlock();else{setErr(true);setShake(true);setTimeout(()=>setShake(false),500);}};
+  return(<div style={{minHeight:"100vh",background:DARK,display:"flex",alignItems:"center",justifyContent:"center"}}>
+    <div style={{animation:shake?"shake .4s ease":"fadeIn .5s ease",background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,padding:"48px 56px",textAlign:"center",maxWidth:380,width:"90%"}}>
+      <div style={{fontSize:32,fontFamily:"'Bebas Neue',sans-serif",letterSpacing:4,marginBottom:4}}>
+        <span style={{color:"#E8294A"}}>TEG</span><span style={{color:"#888",fontSize:24,margin:"0 8px"}}>/</span>
+        <span style={{color:"#7C3AED"}}>GBGS</span><span style={{color:"#888",fontSize:24,margin:"0 8px"}}>/</span>
+        <span style={{color:"#D4A017"}}>AM</span>
+      </div>
+      <div style={{fontSize:13,color:"#555",letterSpacing:3,marginBottom:32,textTransform:"uppercase"}}>Merch Dashboard</div>
+      <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr(false);}} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="Enter password" autoFocus
+        style={{width:"100%",padding:"12px 16px",borderRadius:8,background:DARK,border:`1px solid ${err?"#ef4444":BORDER}`,color:"#fff",fontSize:14,outline:"none",marginBottom:8,fontFamily:"'DM Mono',monospace"}}/>
+      {err&&<div style={{color:"#ef4444",fontSize:12,marginBottom:8}}>Incorrect password</div>}
+      <button onClick={submit} style={{width:"100%",padding:"12px",borderRadius:8,background:"#E8294A",border:"none",color:"#fff",fontSize:14,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>SIGN IN</button>
+    </div>
+  </div>);
+}
+
+// ── Setup Modal ───────────────────────────────────────────────────────────────
+function SetupModal({onSave,onSkip}){
+  const[url,setUrl]=useState(getSheetsUrl()),[testing,setTesting]=useState(false),[testResult,setTestResult]=useState(null);
+  const test=async()=>{if(!url)return;setTesting(true);setTestResult(null);try{await pingSheets(url);setTestResult({ok:true,msg:"✓ Connected!"});}catch(e){setTestResult({ok:false,msg:`✗ ${e.message}`});}setTesting(false);};
+  return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}}>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,padding:40,maxWidth:560,width:"92%",maxHeight:"90vh",overflowY:"auto",fontFamily:"'DM Mono',monospace"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#fff",marginBottom:4}}>CONNECT GOOGLE SHEETS</div>
+      <div style={{color:"#555",fontSize:12,marginBottom:24}}>One-time setup. Uploads save permanently to your Sheet.</div>
+      <div style={{background:DARK,border:"1px solid #1A2A1A",borderRadius:10,padding:20,marginBottom:24}}>
+        <div style={{color:"#34D399",fontSize:11,letterSpacing:2,marginBottom:12,textTransform:"uppercase"}}>Setup Steps</div>
+        {[["1","Create a blank Google Sheet → Extensions → Apps Script"],["2","Delete existing code, paste Code.gs contents, save"],["3","Deploy → New Deployment → Web App"],["4","Execute as: Me  |  Who has access: Anyone → Deploy"],["5","Copy the Web App URL and paste below"]].map(([n,s])=>(
+          <div key={n} style={{display:"flex",gap:12,marginBottom:8,alignItems:"flex-start"}}>
+            <div style={{width:20,height:20,borderRadius:"50%",background:"#E8294A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",flexShrink:0}}>{n}</div>
+            <div style={{fontSize:12,color:"#666",lineHeight:1.5}}>{s}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:8,textTransform:"uppercase"}}>Web App URL</div>
+      <input value={url} onChange={e=>{setUrl(e.target.value);setTestResult(null);}} placeholder="https://script.google.com/macros/s/XXXXXXXX/exec"
+        style={{width:"100%",padding:"12px 14px",borderRadius:8,background:DARK,border:`1px solid ${BORDER}`,color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none",marginBottom:10}}/>
+      <div style={{display:"flex",gap:10,marginBottom:16,alignItems:"center"}}>
+        <button onClick={test} disabled={!url||testing} style={{padding:"8px 16px",borderRadius:6,background:"transparent",border:`1px solid ${BORDER}`,color:"#666",fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer"}}>{testing?"TESTING…":"TEST CONNECTION"}</button>
+        {testResult&&<div style={{fontSize:11,color:testResult.ok?"#34D399":"#ef4444"}}>{testResult.msg}</div>}
+      </div>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={onSkip} style={{flex:1,padding:"11px",borderRadius:8,background:"transparent",border:`1px solid ${BORDER}`,color:"#555",fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer"}}>SKIP — USE DEMO</button>
+        <button onClick={()=>{setSheetsUrl(url);onSave(url);}} disabled={!url} style={{flex:2,padding:"11px",borderRadius:8,background:url?"#E8294A":"#2A1A0A",border:"none",color:url?"#fff":"#6A3A0A",fontFamily:"'DM Mono',monospace",fontSize:12,cursor:url?"pointer":"default"}}>SAVE & CONNECT →</button>
+      </div>
+    </div>
+  </div>);
+}
+
+// ── Upload Modal ──────────────────────────────────────────────────────────────
+function UploadModal({sheetsUrl,onSave,onClose}){
+  const[files,setFiles]=useState([]),[error,setError]=useState(null),[status,setStatus]=useState(null),[drag,setDrag]=useState(false);
+  const inputRef=useRef();
+  const detectType=(filename,rows)=>{
+    const h=Object.keys(rows[0]||{}).join(" ");
+    if(/booking|inventory item|booking net/i.test(h)||/booking/i.test(filename)) return "resova";
+    if(/product mix|establishment|total sales/i.test(h)||/product.mix/i.test(filename)) return "revel";
+    return "revel";
+  };
+  const addFiles=fileList=>{
+    setError(null);
+    Array.from(fileList).forEach(file=>{
+      if(!file.name.endsWith(".csv"))return;
+      const reader=new FileReader();
+      reader.onload=e=>{const rows=parseCSV(e.target.result);if(!rows.length)return;const type=detectType(file.name,rows);setFiles(prev=>[...prev,{name:file.name,type,rows}]);};
+      reader.readAsText(file);
+    });
+  };
+  const handleLoad=async()=>{
+    if(!files.length){setError("Please add at least one CSV file.");return;}
+    setStatus("fetching");
+    let existingRows=[];
+    try{if(sheetsUrl){const d=await loadFromSheets(sheetsUrl);if(d&&d.rows)existingRows=expandRows(d.rows);}}catch(e){}
+    setStatus("processing");
+    const newRows=[];
+    for(const f of files){const rows=f.type==="revel"?processRevelCSV(f.rows,f.name):processResovaCSV(f.rows,f.name);newRows.push(...rows);}
+    const allRows=[...existingRows,...newRows];
+    const slim=allRows.map(slimRow);
+    setStatus("saving");
+    try{
+      if(sheetsUrl){
+        const payload=encodeURIComponent(JSON.stringify({rows:slim}));
+        await sheetsGet(sheetsUrl,{action:"saveAll",payload});
+      }
+      const data={rows:slim,savedAt:new Date().toISOString()};
+      setLocalData(data);onSave(data);
+    }catch(e){setError(`Save failed: ${e.message}`);setStatus(null);}
+  };
+  const busy=!!status;
+  return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,padding:40,maxWidth:580,width:"92%",maxHeight:"92vh",overflowY:"auto",fontFamily:"'DM Mono',monospace"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#fff",marginBottom:4}}>ADD DATA</div>
+      <div style={{color:"#555",fontSize:12,marginBottom:20}}>Drop one or more CSV files — auto-detects Revel vs Resova</div>
+      <div onClick={()=>inputRef.current.click()} onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
+        onDrop={e=>{e.preventDefault();setDrag(false);addFiles(e.dataTransfer.files);}}
+        style={{border:`2px dashed ${drag?"#E8294A":BORDER}`,borderRadius:10,padding:"24px",cursor:"pointer",textAlign:"center",background:drag?"#1A0808":"transparent",marginBottom:16,transition:"all .2s"}}>
+        <div style={{fontSize:28,marginBottom:6}}>📂</div>
+        <div style={{color:"#666",fontSize:12}}>Drop CSV files here or click to browse</div>
+        <div style={{color:"#333",fontSize:11,marginTop:4}}>Multiple files supported</div>
+      </div>
+      <input ref={inputRef} type="file" accept=".csv" multiple style={{display:"none"}} onChange={e=>addFiles(e.target.files)}/>
+      {files.map((f,i)=>(
+        <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,background:DARK,borderRadius:8,padding:"10px 14px"}}>
+          <div style={{flex:1,fontSize:12,color:"#fff"}}>{f.name}</div>
+          <div style={{fontSize:10,color:f.type==="revel"?"#E8294A":"#D4A017",border:`1px solid ${f.type==="revel"?"#E8294A44":"#D4A01744"}`,padding:"2px 8px",borderRadius:4}}>{f.type.toUpperCase()}</div>
+          <button onClick={()=>setFiles(prev=>prev.map((x,j)=>j===i?{...x,type:x.type==="revel"?"resova":"revel"}:x))} style={{fontSize:10,color:"#555",background:"transparent",border:`1px solid ${BORDER}`,borderRadius:4,padding:"2px 8px",cursor:"pointer"}}>⇄</button>
+          <button onClick={()=>setFiles(prev=>prev.filter((_,j)=>j!==i))} style={{fontSize:12,color:"#555",background:"transparent",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+      ))}
+      {error&&<div style={{color:"#ef4444",fontSize:12,marginBottom:14,padding:"10px 14px",background:"#1A0808",borderRadius:6}}>⚠ {error}</div>}
+      <div style={{display:"flex",gap:10,marginTop:16}}>
+        <button onClick={onClose} disabled={busy} style={{flex:1,padding:"11px",borderRadius:8,background:"transparent",border:`1px solid ${BORDER}`,color:"#555",fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer"}}>CANCEL</button>
+        <button onClick={handleLoad} disabled={busy||!files.length} style={{flex:2,padding:"11px",borderRadius:8,background:busy||!files.length?"#1A1A1A":"#E8294A",border:"none",color:busy||!files.length?"#444":"#fff",fontFamily:"'DM Mono',monospace",fontSize:12,cursor:busy?"wait":"pointer"}}>
+          {status==="fetching"?"LOADING EXISTING…":status==="processing"?"PROCESSING…":status==="saving"?"SAVING…":"SAVE & SHARE →"}
+        </button>
+      </div>
+    </div>
+  </div>);
+}
+
+// ── Manage Modal ──────────────────────────────────────────────────────────────
+function ManageModal({sheetsUrl,onClear,onDisconnect,onClose,savedAt}){
+  const[clearing,setClearing]=useState(null);
+  const doClean=async which=>{setClearing(which);try{if(sheetsUrl)await clearSheets(sheetsUrl,which);setLocalData(null);onClear(which);}catch(e){alert(`Error: ${e.message}`);}setClearing(null);};
+  return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}}>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,padding:40,maxWidth:480,width:"92%",fontFamily:"'DM Mono',monospace"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#fff",marginBottom:4}}>MANAGE DATA</div>
+      {savedAt&&<div style={{color:"#34D399",fontSize:12,marginBottom:24}}>Last updated: {new Date(savedAt).toLocaleString()}</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:24}}>
+        {[["revel","Clear Revel Data","#E8294A"],["resova","Clear Resova Data","#D4A017"],["all","Clear All Data","#ef4444"]].map(([w,l,c])=>(
+          <button key={w} onClick={()=>doClean(w)} disabled={!!clearing} style={{padding:"12px",borderRadius:8,background:"transparent",border:`1px solid ${c}44`,color:c,fontFamily:"'DM Mono',monospace",fontSize:12,cursor:"pointer",textAlign:"left"}}>
+            {clearing===w?"CLEARING…":`✕ ${l}`}
+          </button>
+        ))}
+        <button onClick={()=>{setSheetsUrl("");setLocalData(null);onDisconnect();}} style={{padding:"12px",borderRadius:8,background:"transparent",border:`1px solid ${BORDER}`,color:"#555",fontFamily:"'DM Mono',monospace",fontSize:12,cursor:"pointer",textAlign:"left"}}>⊘ Disconnect Sheets</button>
+      </div>
+      <button onClick={onClose} style={{width:"100%",padding:"11px",borderRadius:8,background:"transparent",border:`1px solid ${BORDER}`,color:"#888",fontFamily:"'DM Mono',monospace",fontSize:12,cursor:"pointer"}}>CLOSE</button>
+    </div>
+  </div>);
+}
+
+// ── Overview Tab ──────────────────────────────────────────────────────────────
+function OverviewTab({agg,accent}){
+  const{totalRevenue,totalUnits,monthlyRevenue,topItems,storeList,categories}=agg;
+  const avgUnit=totalUnits?round2(totalRevenue/totalUnits):0;
+  const top5rev=topItems.slice(0,8),top5items=topItems.slice(0,5),top5stores=storeList.slice(0,5),top5cats=categories.slice(0,5);
+  return(<div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:24}}>
+      <KPICard label="Total Merch Revenue" value={`$${(totalRevenue/1000).toFixed(1)}K`} sub={`${totalUnits.toLocaleString()} units`} color={accent}/>
+      <KPICard label="Avg Unit Price" value={`$${avgUnit.toFixed(2)}`} sub="per item" color="#D4A017"/>
+      <KPICard label="Total Transactions" value={monthlyRevenue.reduce((s,m)=>s+m.transactions,0).toLocaleString()} sub="line items" color="#4ECDC4"/>
+      <KPICard label="Active Stores" value={storeList.length} sub="locations" color="#A78BFA"/>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:16}}>
+      <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:20,textTransform:"uppercase"}}>Monthly Revenue</div>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={monthlyRevenue}><CartesianGrid strokeDasharray="3 3" stroke="#1A1A2A"/>
+            <XAxis dataKey="label" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false}/>
+            <YAxis tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}K`}/>
+            <Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill={accent} radius={[4,4,0,0]} name="Revenue"/>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:16,textTransform:"uppercase"}}>Top by Revenue</div>
+        <div style={{display:"flex",gap:12,alignItems:"center"}}>
+          <PieChart width={150} height={150}><Pie data={top5rev} dataKey="revenue" cx={70} cy={70} outerRadius={65} paddingAngle={3}>{top5rev.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie></PieChart>
+          <div style={{flex:1,minWidth:0}}>{top5rev.map((item,i)=>(
+            <div key={item.name} style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:COLORS[i%COLORS.length],flexShrink:0}}/>
+              <div style={{fontSize:10,color:"#888",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{item.name}</div>
+              <div style={{fontSize:10,color:"#fff",flexShrink:0}}>${item.revenue.toLocaleString()}</div>
+            </div>
+          ))}</div>
+        </div>
+      </div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16}}>
+      {[{title:"Top by Units Sold",data:top5items,nameKey:"name",key:"units",fmt:v=>v},{title:"Revenue by Store",data:top5stores,nameKey:"store",key:"revenue",fmt:v=>`$${v.toLocaleString()}`},{title:"Revenue by Category",data:top5cats,nameKey:"name",key:"revenue",fmt:v=>`$${v.toLocaleString()}`}].map(({title,data,nameKey,key,fmt})=>(
+        <div key={title} style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+          <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:16,textTransform:"uppercase"}}>{title}</div>
+          <div style={{display:"flex",gap:12,alignItems:"center"}}>
+            <PieChart width={120} height={120}><Pie data={data} dataKey={key} cx={55} cy={55} outerRadius={50} paddingAngle={3}>{data.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie></PieChart>
+            <div style={{flex:1,minWidth:0}}>{data.map((item,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <div style={{width:7,height:7,borderRadius:"50%",background:COLORS[i%COLORS.length],flexShrink:0}}/>
+                <div style={{fontSize:10,color:"#888",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{item[nameKey]}</div>
+                <div style={{fontSize:10,color:"#fff",flexShrink:0}}>{fmt(item[key])}</div>
+              </div>
+            ))}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>);
+}
+
+// ── Products Tab ──────────────────────────────────────────────────────────────
+function ProductsTab({agg,accent}){
+  const{topItems,totalRevenue}=agg;
+  const[sort,setSort]=useState({field:"revenue",dir:"desc"});
+  const sorted=sortedItems(topItems.map(item=>({...item,avgUnit:item.units?round2(item.revenue/item.units):0,share:totalRevenue?round2(item.revenue/totalRevenue*100):0})),sort);
+  return(<div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+      <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:20,textTransform:"uppercase"}}>Top Products — Revenue</div>
+        <ResponsiveContainer width="100%" height={260}><BarChart data={topItems.slice(0,10)} layout="vertical">
+          <CartesianGrid strokeDasharray="3 3" stroke="#1A1A2A" horizontal={false}/>
+          <XAxis type="number" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v}`}/>
+          <YAxis dataKey="name" type="category" width={140} tick={{fill:"#888",fontSize:10}} axisLine={false} tickLine={false}/>
+          <Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill="#D4A017" radius={[0,4,4,0]} name="Revenue"/>
+        </BarChart></ResponsiveContainer>
+      </div>
+      <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:20,textTransform:"uppercase"}}>Top Products — Units</div>
+        <ResponsiveContainer width="100%" height={260}><BarChart data={topItems.slice(0,10)} layout="vertical">
+          <CartesianGrid strokeDasharray="3 3" stroke="#1A1A2A" horizontal={false}/>
+          <XAxis type="number" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false}/>
+          <YAxis dataKey="name" type="category" width={140} tick={{fill:"#888",fontSize:10}} axisLine={false} tickLine={false}/>
+          <Tooltip content={<Tip/>}/><Bar dataKey="units" fill="#4ECDC4" radius={[0,4,4,0]} name="Units"/>
+        </BarChart></ResponsiveContainer>
+      </div>
+    </div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+      <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:16,textTransform:"uppercase"}}>Full Product Table</div>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr style={{borderBottom:`1px solid ${BORDER}`}}>
+        <th style={{padding:"8px 12px",color:"#444",fontWeight:400,fontSize:10,letterSpacing:1,textAlign:"left"}}>#</th>
+        <SortTh label="Product" field="name" sort={sort} setSort={setSort}/>
+        <SortTh label="Category" field="category" sort={sort} setSort={setSort}/>
+        <SortTh label="Units" field="units" sort={sort} setSort={setSort}/>
+        <SortTh label="Revenue" field="revenue" sort={sort} setSort={setSort}/>
+        <SortTh label="Avg/Unit" field="avgUnit" sort={sort} setSort={setSort}/>
+        <SortTh label="Share %" field="share" sort={sort} setSort={setSort}/>
+      </tr></thead><tbody>
+        {sorted.map((item,i)=>(
+          <tr key={item.name} style={{borderBottom:`1px solid ${BORDER}22`}}>
+            <td style={{padding:"10px 12px",color:"#333"}}>{i+1}</td>
+            <td style={{padding:"10px 12px",color:"#fff"}}>{item.name}</td>
+            <td style={{padding:"10px 12px",color:"#555",fontSize:11}}>{item.category||"—"}</td>
+            <td style={{padding:"10px 12px",color:"#4ECDC4"}}>{item.units}</td>
+            <td style={{padding:"10px 12px",color:accent}}>${item.revenue.toLocaleString()}</td>
+            <td style={{padding:"10px 12px",color:"#D4A017"}}>${item.avgUnit.toFixed(2)}</td>
+            <td style={{padding:"10px 12px",minWidth:120}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{flex:1,height:3,background:BORDER,borderRadius:2}}><div style={{width:`${item.share}%`,height:"100%",background:accent,borderRadius:2}}/></div>
+                <span style={{color:"#555",minWidth:32,fontSize:11}}>{item.share.toFixed(1)}%</span>
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody></table>
+    </div>
+  </div>);
+}
+
+// ── By Store Tab ──────────────────────────────────────────────────────────────
+function ByStoreTab({agg,accent}){
+  const{storeList,totalRevenue}=agg;
+  const[sort,setSort]=useState({field:"revenue",dir:"desc"});
+  const sorted=sortedItems(storeList.map(s=>({...s,share:totalRevenue?round2(s.revenue/totalRevenue*100):0})),sort);
+  return(<div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24,marginBottom:16}}>
+      <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:20,textTransform:"uppercase"}}>Revenue by Store</div>
+      <ResponsiveContainer width="100%" height={280}><BarChart data={storeList.slice(0,20)}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#1A1A2A"/>
+        <XAxis dataKey="store" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false} angle={-30} textAnchor="end" height={60}/>
+        <YAxis tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}K`}/>
+        <Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill={accent} radius={[4,4,0,0]} name="Revenue"/>
+      </BarChart></ResponsiveContainer>
+    </div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr style={{borderBottom:`1px solid ${BORDER}`}}>
+        <th style={{padding:"8px 12px",color:"#444",fontWeight:400,fontSize:10,textAlign:"left"}}>#</th>
+        <SortTh label="Store" field="store" sort={sort} setSort={setSort}/>
+        <SortTh label="Units" field="units" sort={sort} setSort={setSort}/>
+        <SortTh label="Revenue" field="revenue" sort={sort} setSort={setSort}/>
+        <SortTh label="Avg/Unit" field="avgUnit" sort={sort} setSort={setSort}/>
+        <SortTh label="Share %" field="share" sort={sort} setSort={setSort}/>
+      </tr></thead><tbody>
+        {sorted.map((s,i)=>(
+          <tr key={s.store} style={{borderBottom:`1px solid ${BORDER}22`}}>
+            <td style={{padding:"10px 12px",color:"#333"}}>{i+1}</td>
+            <td style={{padding:"10px 12px",color:"#fff"}}>{s.store}</td>
+            <td style={{padding:"10px 12px",color:"#4ECDC4"}}>{s.units}</td>
+            <td style={{padding:"10px 12px",color:accent}}>${s.revenue.toLocaleString()}</td>
+            <td style={{padding:"10px 12px",color:"#D4A017"}}>${s.avgUnit.toFixed(2)}</td>
+            <td style={{padding:"10px 12px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{flex:1,height:3,background:BORDER,borderRadius:2}}><div style={{width:`${s.share}%`,height:"100%",background:accent,borderRadius:2}}/></div>
+                <span style={{color:"#555",fontSize:11,minWidth:32}}>{s.share.toFixed(1)}%</span>
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody></table>
+    </div>
+  </div>);
+}
+
+// ── Detailed By Store Tab ─────────────────────────────────────────────────────
+function DetailedByStoreTab({rows,accent}){
+  const allStores=[...new Set(rows.map(r=>r.store))].sort();
+  const[selected,setSelected]=useState([]);
+  const[sort,setSort]=useState({field:"revenue",dir:"desc"});
+  const toggle=s=>setSelected(prev=>prev.includes(s)?prev.filter(x=>x!==s):[...prev,s]);
+  const filtered=selected.length?rows.filter(r=>selected.includes(r.store)):[];
+  const agg=aggregateRows(filtered);
+  const sorted=sortedItems(agg.topItems.map(item=>({...item,avgUnit:item.units?round2(item.revenue/item.units):0,share:agg.totalRevenue?round2(item.revenue/agg.totalRevenue*100):0})),sort);
+  const maxRev=Math.max(...agg.monthlyRevenue.map(m=>m.revenue),1);
+  return(<div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:20,marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,textTransform:"uppercase"}}>{selected.length?`${selected.length} Store${selected.length>1?"s":""} Selected`:"Select Stores"}</div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setSelected([...allStores])} style={{fontSize:10,color:"#555",background:"transparent",border:`1px solid ${BORDER}`,borderRadius:4,padding:"3px 10px",cursor:"pointer"}}>SELECT ALL</button>
+          <button onClick={()=>setSelected([])} style={{fontSize:10,color:"#555",background:"transparent",border:`1px solid ${BORDER}`,borderRadius:4,padding:"3px 10px",cursor:"pointer"}}>CLEAR</button>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:6}}>
+        {allStores.map(s=>(
+          <button key={s} onClick={()=>toggle(s)} style={{padding:"6px 8px",borderRadius:6,background:selected.includes(s)?accent+"22":"transparent",border:`1px solid ${selected.includes(s)?accent:BORDER}`,color:selected.includes(s)?accent:"#666",fontSize:10,cursor:"pointer",textAlign:"left",lineHeight:1.3,transition:"all .15s"}}>
+            {selected.includes(s)&&<span style={{marginRight:4}}>●</span>}{s}
+          </button>
+        ))}
+      </div>
+    </div>
+    {selected.length===0&&<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:40,textAlign:"center"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#333",marginBottom:8}}>SELECT STORES ABOVE</div>
+      <div style={{color:"#555",fontSize:12}}>Click one or more stores to see their combined data</div>
+    </div>}
+    {selected.length>0&&<>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:16}}>
+        <KPICard label="Revenue" value={`$${(agg.totalRevenue/1000).toFixed(1)}K`} sub="" color={accent}/>
+        <KPICard label="Units Sold" value={agg.totalUnits.toLocaleString()} sub="" color="#4ECDC4"/>
+        <KPICard label="Avg/Unit" value={`$${agg.totalUnits?round2(agg.totalRevenue/agg.totalUnits).toFixed(2):"0"}`} sub="" color="#D4A017"/>
+        <KPICard label="Products" value={agg.topItems.length} sub="unique items" color="#A78BFA"/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:16}}>
+        <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+          <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:16,textTransform:"uppercase"}}>Monthly Revenue</div>
+          {agg.monthlyRevenue.length===0?<div style={{color:"#333",fontSize:12,padding:20,textAlign:"center"}}>No dated data</div>:(
+            <div style={{display:"flex",alignItems:"flex-end",gap:4,height:180,paddingBottom:24}}>
+              {agg.monthlyRevenue.map((m,i)=>(
+                <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",height:"100%",justifyContent:"flex-end"}}>
+                  <div style={{fontSize:9,color:"#fff",marginBottom:2}}>${(m.revenue/1000).toFixed(1)}K</div>
+                  <div style={{width:"100%",background:accent,borderRadius:"3px 3px 0 0",height:`${Math.round(m.revenue/maxRev*140)}px`}}/>
+                  <div style={{fontSize:9,color:"#555",marginTop:4,whiteSpace:"nowrap",overflow:"hidden",maxWidth:"100%",textAlign:"center"}}>{m.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+          <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:16,textTransform:"uppercase"}}>Top Products</div>
+          <div style={{display:"flex",gap:12,alignItems:"center"}}>
+            <PieChart width={130} height={130}><Pie data={agg.topItems.slice(0,6)} dataKey="revenue" cx={60} cy={60} outerRadius={55} paddingAngle={3}>{agg.topItems.slice(0,6).map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie></PieChart>
+            <div style={{flex:1,minWidth:0}}>{agg.topItems.slice(0,6).map((item,i)=>(
+              <div key={item.name} style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+                <div style={{width:7,height:7,borderRadius:"50%",background:COLORS[i%COLORS.length],flexShrink:0}}/>
+                <div style={{fontSize:10,color:"#888",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{item.name}</div>
+                <div style={{fontSize:10,color:"#fff",flexShrink:0}}>${item.revenue.toLocaleString()}</div>
+              </div>
+            ))}</div>
+          </div>
+        </div>
+      </div>
+      <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr style={{borderBottom:`1px solid ${BORDER}`}}>
+          <th style={{padding:"8px 12px",color:"#444",fontWeight:400,fontSize:10,textAlign:"left"}}>#</th>
+          <SortTh label="Product" field="name" sort={sort} setSort={setSort}/>
+          <SortTh label="Units" field="units" sort={sort} setSort={setSort}/>
+          <SortTh label="Revenue" field="revenue" sort={sort} setSort={setSort}/>
+          <SortTh label="Avg/Unit" field="avgUnit" sort={sort} setSort={setSort}/>
+          <SortTh label="Share %" field="share" sort={sort} setSort={setSort}/>
+        </tr></thead><tbody>
+          {sorted.map((item,i)=>(
+            <tr key={item.name} style={{borderBottom:`1px solid ${BORDER}22`}}>
+              <td style={{padding:"9px 12px",color:"#333"}}>{i+1}</td>
+              <td style={{padding:"9px 12px",color:"#fff"}}>{item.name}</td>
+              <td style={{padding:"9px 12px",color:"#4ECDC4"}}>{item.units}</td>
+              <td style={{padding:"9px 12px",color:accent}}>${item.revenue.toLocaleString()}</td>
+              <td style={{padding:"9px 12px",color:"#D4A017"}}>${item.avgUnit.toFixed(2)}</td>
+              <td style={{padding:"9px 12px",fontSize:11,color:"#555"}}>{item.share.toFixed(1)}%</td>
+            </tr>
+          ))}
+        </tbody></table>
+      </div>
+    </>}
+  </div>);
+}
+
+// ── Product Search Tab ────────────────────────────────────────────────────────
+function ProductSearchTab({rows,accent}){
+  const[tags,setTags]=useState([]),[input,setInput]=useState(""),[selectedNames,setSelectedNames]=useState([]);
+  const[selectedStores,setSelectedStores]=useState([]),[dateFrom,setDateFrom]=useState(""),[dateTo,setDateTo]=useState("");
+  const[sortTable,setSortTable]=useState({field:"revenue",dir:"desc"});
+  const addTag=()=>{const t=input.trim().toLowerCase();if(t&&!tags.includes(t)){setTags([...tags,t]);setSelectedNames([]);}setInput("");};
+  const removeTag=t=>{setTags(tags.filter(x=>x!==t));setSelectedNames([]);};
+  const matchedNames=tags.length===0?[]:[...new Set(rows.filter(r=>tags.some(t=>r.name.toLowerCase().includes(t))).map(r=>r.name))].sort();
+  useEffect(()=>{setSelectedNames(matchedNames);},[matchedNames.join(",")]);
+  const activeNames=selectedNames.length?selectedNames:matchedNames;
+  const filteredRows=rows.filter(r=>{
+    if(!activeNames.includes(r.name))return false;
+    if(selectedStores.length&&!selectedStores.includes(r.store))return false;
+    if(dateFrom&&r.date&&r.date<dateFrom)return false;
+    if(dateTo&&r.date&&r.date>dateTo)return false;
+    return true;
+  });
+  const itemStores=[...new Set(rows.filter(r=>activeNames.includes(r.name)).map(r=>r.store))].sort();
+  const agg=aggregateRows(filteredRows);
+  const avgUnit=agg.totalUnits?round2(agg.totalRevenue/agg.totalUnits):0;
+  const storeTableData=sortedItems(agg.storeList.map(s=>({...s,avgUnit:s.units?round2(s.revenue/s.units):0})),sortTable);
+  return(<div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24,marginBottom:16}}>
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12,flexWrap:"wrap"}}>
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTag();}}} placeholder="Search products… press Enter to add tag"
+          style={{flex:1,minWidth:200,padding:"10px 14px",borderRadius:8,background:DARK,border:`1px solid ${BORDER}`,color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none"}}/>
+        <button onClick={addTag} style={{padding:"10px 16px",borderRadius:8,background:accent,border:"none",color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer"}}>+ ADD</button>
+      </div>
+      {tags.length>0&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>{tags.map(t=>(
+        <span key={t} style={{background:accent+"22",border:`1px solid ${accent}44`,color:accent,padding:"3px 10px",borderRadius:20,fontSize:11,display:"flex",alignItems:"center",gap:6}}>
+          {t}<span onClick={()=>removeTag(t)} style={{cursor:"pointer",opacity:.7}}>×</span>
+        </span>
+      ))}</div>}
+      {matchedNames.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{matchedNames.map(n=>(
+        <button key={n} onClick={()=>setSelectedNames(prev=>prev.includes(n)?prev.filter(x=>x!==n):[...prev,n])} style={{padding:"4px 10px",borderRadius:6,background:activeNames.includes(n)?accent+"22":"transparent",border:`1px solid ${activeNames.includes(n)?accent:BORDER}`,color:activeNames.includes(n)?accent:"#555",fontSize:11,cursor:"pointer"}}>{n}</button>
+      ))}</div>}
+      <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-start"}}>
+        <div style={{flex:1,minWidth:200}}>
+          <div style={{fontSize:10,color:"#555",letterSpacing:2,marginBottom:6,textTransform:"uppercase"}}>Stores</div>
+          <select multiple value={selectedStores} onChange={e=>setSelectedStores(Array.from(e.target.selectedOptions,o=>o.value))} style={{width:"100%",background:DARK,border:`1px solid ${BORDER}`,color:"#fff",borderRadius:6,padding:"6px",fontSize:11,fontFamily:"'DM Mono',monospace",height:80}}>
+            {itemStores.map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+          <div style={{fontSize:10,color:"#333",marginTop:3}}>Hold Ctrl/Cmd to select multiple</div>
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          <div><div style={{fontSize:10,color:"#555",letterSpacing:2,marginBottom:6,textTransform:"uppercase"}}>From</div>
+            <input type="month" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{background:DARK,border:`1px solid ${BORDER}`,color:"#fff",borderRadius:6,padding:"6px 10px",fontSize:12,fontFamily:"'DM Mono',monospace"}}/></div>
+          <div><div style={{fontSize:10,color:"#555",letterSpacing:2,marginBottom:6,textTransform:"uppercase"}}>To</div>
+            <input type="month" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{background:DARK,border:`1px solid ${BORDER}`,color:"#fff",borderRadius:6,padding:"6px 10px",fontSize:12,fontFamily:"'DM Mono',monospace"}}/></div>
+        </div>
+      </div>
+    </div>
+    {tags.length>0&&<>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:16}}>
+        <KPICard label="Revenue" value={`$${agg.totalRevenue.toLocaleString()}`} sub={`${agg.totalUnits} units`} color={accent}/>
+        <KPICard label="Avg/Unit" value={`$${avgUnit.toFixed(2)}`} sub="per item" color="#D4A017"/>
+        <KPICard label="Stores" value={agg.storeList.length} sub="locations selling this" color="#4ECDC4"/>
+      </div>
+      {agg.monthlyRevenue.length>0&&<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24,marginBottom:16}}>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:20,textTransform:"uppercase"}}>Monthly Performance</div>
+        <ResponsiveContainer width="100%" height={200}><BarChart data={agg.monthlyRevenue}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1A1A2A"/>
+          <XAxis dataKey="label" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false}/>
+          <YAxis tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v}`}/>
+          <Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill={accent} radius={[4,4,0,0]} name="Revenue"/>
+        </BarChart></ResponsiveContainer>
+      </div>}
+      {storeTableData.length>0&&<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:16,textTransform:"uppercase"}}>Sales by Store</div>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr style={{borderBottom:`1px solid ${BORDER}`}}>
+          <SortTh label="Store" field="store" sort={sortTable} setSort={setSortTable}/>
+          <SortTh label="Units" field="units" sort={sortTable} setSort={setSortTable}/>
+          <SortTh label="Revenue" field="revenue" sort={sortTable} setSort={setSortTable}/>
+          <SortTh label="Avg/Unit" field="avgUnit" sort={sortTable} setSort={setSortTable}/>
+        </tr></thead><tbody>
+          {storeTableData.map(s=>(
+            <tr key={s.store} style={{borderBottom:`1px solid ${BORDER}22`}}>
+              <td style={{padding:"9px 12px",color:"#fff"}}>{s.store}</td>
+              <td style={{padding:"9px 12px",color:"#4ECDC4"}}>{s.units}</td>
+              <td style={{padding:"9px 12px",color:accent}}>${s.revenue.toLocaleString()}</td>
+              <td style={{padding:"9px 12px",color:"#D4A017"}}>${s.avgUnit.toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody></table>
+      </div>}
+    </>}
+    {tags.length===0&&<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:40,textAlign:"center"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#333",marginBottom:8}}>SEARCH FOR A PRODUCT</div>
+      <div style={{color:"#555",fontSize:12}}>Type a product name above and press Enter</div>
+    </div>}
+  </div>);
+}
+
+// ── Trends Tab ────────────────────────────────────────────────────────────────
+function TrendsTab({agg,accent}){
+  const{monthlyRevenue}=agg;
+  return(<div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24,marginBottom:16}}>
+      <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:20,textTransform:"uppercase"}}>Revenue & Units Over Time</div>
+      <ResponsiveContainer width="100%" height={260}><LineChart data={monthlyRevenue}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#1A1A2A"/>
+        <XAxis dataKey="label" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false}/>
+        <YAxis yAxisId="left" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(1)}K`}/>
+        <YAxis yAxisId="right" orientation="right" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false}/>
+        <Tooltip content={<Tip/>}/>
+        <Line yAxisId="left" type="monotone" dataKey="revenue" stroke={accent} strokeWidth={2} dot={{fill:accent,r:3}} name="Revenue"/>
+        <Line yAxisId="right" type="monotone" dataKey="units" stroke="#D4A017" strokeWidth={2} dot={{fill:"#D4A017",r:3}} name="Units"/>
+      </LineChart></ResponsiveContainer>
+    </div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+      <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:20,textTransform:"uppercase"}}>Monthly Transactions</div>
+      <ResponsiveContainer width="100%" height={200}><BarChart data={monthlyRevenue}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#1A1A2A"/>
+        <XAxis dataKey="label" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false}/>
+        <YAxis tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false}/>
+        <Tooltip content={<Tip/>}/><Bar dataKey="transactions" fill="#4ECDC4" radius={[4,4,0,0]} name="Transactions"/>
+      </BarChart></ResponsiveContainer>
+    </div>
+  </div>);
+}
+
+// ── Compare Tab ───────────────────────────────────────────────────────────────
+function CompareTab({rows,accent}){
+  const[tags,setTags]=useState([]),[input,setInput]=useState(""),[selectedNames,setSelectedNames]=useState([]);
+  const[selectedStores,setSelectedStores]=useState([]);
+  const[periodA,setPeriodA]=useState({from:"",to:""}),[periodB,setPeriodB]=useState({from:"",to:""});
+  const addTag=()=>{const t=input.trim().toLowerCase();if(t&&!tags.includes(t)){setTags([...tags,t]);setSelectedNames([]);}setInput("");};
+  const removeTag=t=>{setTags(tags.filter(x=>x!==t));setSelectedNames([]);};
+  const matchedNames=tags.length===0?[]:[...new Set(rows.filter(r=>tags.some(t=>r.name.toLowerCase().includes(t))).map(r=>r.name))].sort();
+  useEffect(()=>{setSelectedNames(matchedNames);},[matchedNames.join(",")]);
+  const activeNames=selectedNames.length?selectedNames:matchedNames;
+  const allStores=[...new Set(rows.filter(r=>activeNames.includes(r.name)).map(r=>r.store))].sort();
+  const calcPeriod=(from,to)=>{
+    const filtered=rows.filter(r=>{
+      if(!activeNames.includes(r.name))return false;
+      if(selectedStores.length&&!selectedStores.includes(r.store))return false;
+      if(from&&r.date&&r.date<from)return false;
+      if(to&&r.date&&r.date>to)return false;
+      return true;
+    });
+    return aggregateRows(filtered);
+  };
+  const aggA=calcPeriod(periodA.from,periodA.to),aggB=calcPeriod(periodB.from,periodB.to);
+  const pct=(a,b)=>b===0?null:round2((a-b)/b*100);
+  const revPct=pct(aggA.totalRevenue,aggB.totalRevenue),unitsPct=pct(aggA.totalUnits,aggB.totalUnits);
+  const allMonths=[...new Set([...aggA.monthlyRevenue.map(m=>m.month),...aggB.monthlyRevenue.map(m=>m.month)])].sort();
+  const chartData=allMonths.map(m=>{const a=aggA.monthlyRevenue.find(x=>x.month===m),b=aggB.monthlyRevenue.find(x=>x.month===m);return{label:formatMonthLabel(m),periodA:a?.revenue||0,periodB:b?.revenue||0};});
+  const allProductNames=[...new Set([...aggA.topItems.map(i=>i.name),...aggB.topItems.map(i=>i.name)])];
+  const productRows=allProductNames.map(name=>{const a=aggA.topItems.find(i=>i.name===name)||{revenue:0,units:0},b=aggB.topItems.find(i=>i.name===name)||{revenue:0,units:0};return{name,revA:a.revenue,revB:b.revenue,unitsA:a.units,unitsB:b.units,revPct:pct(a.revenue,b.revenue)};}).sort((a,b)=>b.revA-a.revA);
+  const PctBadge=({val})=>val==null?null:(<span style={{color:val>=0?"#34D399":"#ef4444",fontSize:11}}>{val>=0?"▲":"▼"}{Math.abs(val)}%</span>);
+  return(<div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24,marginBottom:16}}>
+      <div style={{fontSize:11,color:accent,letterSpacing:2,marginBottom:12,textTransform:"uppercase"}}>① Products</div>
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTag();}}} placeholder="Search products… press Enter"
+          style={{flex:1,minWidth:200,padding:"9px 14px",borderRadius:8,background:DARK,border:`1px solid ${BORDER}`,color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none"}}/>
+        <button onClick={addTag} style={{padding:"9px 16px",borderRadius:8,background:accent,border:"none",color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer"}}>+ ADD</button>
+      </div>
+      {tags.length>0&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>{tags.map(t=>(
+        <span key={t} style={{background:accent+"22",border:`1px solid ${accent}44`,color:accent,padding:"3px 10px",borderRadius:20,fontSize:11,display:"flex",alignItems:"center",gap:6}}>
+          {t}<span onClick={()=>removeTag(t)} style={{cursor:"pointer",opacity:.7}}>×</span>
+        </span>
+      ))}</div>}
+      {matchedNames.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6}}>{matchedNames.map(n=>(
+        <button key={n} onClick={()=>setSelectedNames(prev=>prev.includes(n)?prev.filter(x=>x!==n):[...prev,n])} style={{padding:"4px 10px",borderRadius:6,background:activeNames.includes(n)?accent+"22":"transparent",border:`1px solid ${activeNames.includes(n)?accent:BORDER}`,color:activeNames.includes(n)?accent:"#555",fontSize:11,cursor:"pointer"}}>{n}</button>
+      ))}</div>}
+    </div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24,marginBottom:16}}>
+      <div style={{fontSize:11,color:accent,letterSpacing:2,marginBottom:12,textTransform:"uppercase"}}>② Stores (optional)</div>
+      <select multiple value={selectedStores} onChange={e=>setSelectedStores(Array.from(e.target.selectedOptions,o=>o.value))} style={{width:"100%",background:DARK,border:`1px solid ${BORDER}`,color:"#fff",borderRadius:6,padding:"6px",fontSize:11,fontFamily:"'DM Mono',monospace",height:80}}>
+        {allStores.map(s=><option key={s} value={s}>{s}</option>)}
+      </select>
+      <div style={{fontSize:10,color:"#333",marginTop:4}}>Hold Ctrl/Cmd to select multiple · leave empty for all stores</div>
+    </div>
+    <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24,marginBottom:16}}>
+      <div style={{fontSize:11,color:accent,letterSpacing:2,marginBottom:16,textTransform:"uppercase"}}>③ Date Ranges</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24}}>
+        {[{label:"Period A",period:periodA,set:setPeriodA,color:accent},{label:"Period B",period:periodB,set:setPeriodB,color:"#888"}].map(({label,period,set,color})=>(
+          <div key={label}>
+            <div style={{fontSize:11,color,letterSpacing:2,marginBottom:10,textTransform:"uppercase"}}>{label}</div>
+            <div style={{display:"flex",gap:10}}>
+              <div style={{flex:1}}><div style={{fontSize:10,color:"#555",marginBottom:4}}>FROM</div>
+                <input type="month" value={period.from} onChange={e=>set(p=>({...p,from:e.target.value}))} style={{width:"100%",background:DARK,border:`1px solid ${BORDER}`,color:"#fff",borderRadius:6,padding:"6px 10px",fontSize:12,fontFamily:"'DM Mono',monospace"}}/></div>
+              <div style={{flex:1}}><div style={{fontSize:10,color:"#555",marginBottom:4}}>TO</div>
+                <input type="month" value={period.to} onChange={e=>set(p=>({...p,to:e.target.value}))} style={{width:"100%",background:DARK,border:`1px solid ${BORDER}`,color:"#fff",borderRadius:6,padding:"6px 10px",fontSize:12,fontFamily:"'DM Mono',monospace"}}/></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+    {tags.length>0&&<>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+        {[{label:"Revenue",a:aggA.totalRevenue,b:aggB.totalRevenue,fmt:v=>`$${v.toLocaleString()}`,pctVal:revPct},{label:"Units Sold",a:aggA.totalUnits,b:aggB.totalUnits,fmt:v=>v.toLocaleString(),pctVal:unitsPct}].map(({label,a,b,fmt,pctVal})=>(
+          <div key={label} style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+            <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:12,textTransform:"uppercase"}}>{label}</div>
+            <div style={{display:"flex",gap:24,alignItems:"flex-end"}}>
+              <div><div style={{fontSize:10,color:accent,marginBottom:4}}>PERIOD A</div><div style={{fontSize:28,fontFamily:"'Bebas Neue',sans-serif",color:"#fff"}}>{fmt(a)}</div></div>
+              <div style={{fontSize:20,color:"#333",paddingBottom:4}}>vs</div>
+              <div><div style={{fontSize:10,color:"#888",marginBottom:4}}>PERIOD B</div><div style={{fontSize:28,fontFamily:"'Bebas Neue',sans-serif",color:"#888"}}>{fmt(b)}</div></div>
+              <div style={{paddingBottom:6}}><PctBadge val={pctVal}/></div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {chartData.length>0&&<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24,marginBottom:16}}>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:20,textTransform:"uppercase"}}>Period Comparison</div>
+        <ResponsiveContainer width="100%" height={220}><LineChart data={chartData}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1A1A2A"/>
+          <XAxis dataKey="label" tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false}/>
+          <YAxis tick={{fill:"#555",fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v}`}/>
+          <Tooltip content={<Tip/>}/>
+          <Line type="monotone" dataKey="periodA" stroke={accent} strokeWidth={2} dot={{fill:accent,r:3}} name="Period A"/>
+          <Line type="monotone" dataKey="periodB" stroke="#888" strokeWidth={2} strokeDasharray="5 5" dot={{fill:"#888",r:3}} name="Period B"/>
+        </LineChart></ResponsiveContainer>
+      </div>}
+      {productRows.length>0&&<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:24}}>
+        <div style={{fontSize:11,color:"#555",letterSpacing:2,marginBottom:16,textTransform:"uppercase"}}>Product Breakdown</div>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr style={{borderBottom:`1px solid ${BORDER}`}}>
+          {["Product","Rev A","Rev B","Units A","Units B","Change"].map(h=><th key={h} style={{textAlign:"left",padding:"8px 12px",color:"#444",fontWeight:400,fontSize:10,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}
+        </tr></thead><tbody>
+          {productRows.map(p=>(
+            <tr key={p.name} style={{borderBottom:`1px solid ${BORDER}22`}}>
+              <td style={{padding:"9px 12px",color:"#fff"}}>{p.name}</td>
+              <td style={{padding:"9px 12px",color:accent}}>${p.revA.toLocaleString()}</td>
+              <td style={{padding:"9px 12px",color:"#888"}}>${p.revB.toLocaleString()}</td>
+              <td style={{padding:"9px 12px",color:"#4ECDC4"}}>{p.unitsA}</td>
+              <td style={{padding:"9px 12px",color:"#888"}}>{p.unitsB}</td>
+              <td style={{padding:"9px 12px"}}>{p.revPct!=null?<span style={{color:p.revPct>=0?"#34D399":"#ef4444"}}>{p.revPct>=0?"▲":"▼"}{Math.abs(p.revPct)}%</span>:"—"}</td>
+            </tr>
+          ))}
+        </tbody></table>
+      </div>}
+    </>}
+    {tags.length===0&&<div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:10,padding:40,textAlign:"center"}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,color:"#333",marginBottom:8}}>COMPARE PERIODS</div>
+      <div style={{color:"#555",fontSize:12}}>Search for products above, then set two date ranges to compare</div>
+    </div>}
+  </div>);
+}
+
+// ── Brand View ────────────────────────────────────────────────────────────────
+function BrandView({brand,allRows}){
+  const cfg=BRAND_CONFIG[brand],accent=cfg.accent;
+  const[activeTab,setActiveTab]=useState("overview"),[dateFrom,setDateFrom]=useState(""),[dateTo,setDateTo]=useState("");
+  const[storeFilter,setStoreFilter]=useState([]);
+  const brandRows=allRows.filter(r=>r.brand===brand);
+  const allStores=[...new Set(brandRows.map(r=>r.store))].sort();
+  const filteredRows=filterRows(allRows,brand,storeFilter.length?storeFilter:null,dateFrom,dateTo);
+  const agg=aggregateRows(filteredRows);
+  const tabs=[{id:"overview",label:"OVERVIEW"},{id:"products",label:"PRODUCTS"},{id:"bystore",label:"BY STORE"},{id:"detailstore",label:"DETAILED BY STORE"},{id:"search",label:"PRODUCT SEARCH"},{id:"trends",label:"TRENDS"},{id:"compare",label:"COMPARE"}];
+  if(brandRows.length===0)return(<div style={{padding:"60px 32px",textAlign:"center"}}>
+    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,color:"#2A2A3A",marginBottom:12}}>NO {cfg.label} DATA YET</div>
+    <div style={{color:"#444",fontSize:13}}>Upload CSVs with "{cfg.label}" brand data to populate this tab</div>
+  </div>);
+  return(<div>
+    <div style={{padding:"0 32px",borderBottom:`1px solid ${BORDER}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+      <div style={{display:"flex"}}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setActiveTab(t.id)} style={{padding:"10px 16px",background:"transparent",border:"none",borderBottom:`2px solid ${activeTab===t.id?accent:"transparent"}`,color:activeTab===t.id?accent:"#555",fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:1,cursor:"pointer",marginBottom:-1,whiteSpace:"nowrap"}}>{t.label}</button>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:10,alignItems:"center",paddingBottom:8}}>
+        <select value="" onChange={e=>{if(e.target.value==="all")setStoreFilter([]);else setStoreFilter([e.target.value]);}} style={{background:DARK,border:`1px solid ${BORDER}`,color:"#fff",borderRadius:6,padding:"5px 10px",fontSize:11,fontFamily:"'DM Mono',monospace",maxWidth:160}}>
+          <option value="all">All Stores</option>
+          {allStores.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+        <input type="month" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={{background:DARK,border:`1px solid ${BORDER}`,color:"#fff",borderRadius:6,padding:"5px 10px",fontSize:11,fontFamily:"'DM Mono',monospace"}}/>
+        <span style={{color:"#333",fontSize:12}}>→</span>
+        <input type="month" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={{background:DARK,border:`1px solid ${BORDER}`,color:"#fff",borderRadius:6,padding:"5px 10px",fontSize:11,fontFamily:"'DM Mono',monospace"}}/>
+        {(dateFrom||dateTo)&&<button onClick={()=>{setDateFrom("");setDateTo("");}} style={{fontSize:10,color:"#555",background:"transparent",border:`1px solid ${BORDER}`,borderRadius:4,padding:"4px 8px",cursor:"pointer"}}>✕</button>}
+      </div>
+    </div>
+    <div style={{padding:"24px 32px"}}>
+      {activeTab==="overview"&&<OverviewTab agg={agg} accent={accent}/>}
+      {activeTab==="products"&&<ProductsTab agg={agg} accent={accent}/>}
+      {activeTab==="bystore"&&<ByStoreTab agg={agg} accent={accent}/>}
+      {activeTab==="detailstore"&&<DetailedByStoreTab rows={filteredRows} accent={accent}/>}
+      {activeTab==="search"&&<ProductSearchTab rows={filteredRows} accent={accent}/>}
+      {activeTab==="trends"&&<TrendsTab agg={agg} accent={accent}/>}
+      {activeTab==="compare"&&<CompareTab rows={filteredRows} accent={accent}/>}
+    </div>
+  </div>);
+}
+
+// ── Mock Data ─────────────────────────────────────────────────────────────────
+function generateMockData(){
+  const products=[{name:"Classic Tee",cat:"Apparel"},{name:"Logo Hoodie",cat:"Apparel"},{name:"Escape Pin",cat:"Accessories"},{name:"Keychain Set",cat:"Accessories"},{name:"Puzzle Book",cat:"Books"},{name:"Tote Bag",cat:"Accessories"},{name:"Mug",cat:"Drinkware"},{name:"Cap",cat:"Apparel"},{name:"Water Bottle",cat:"Drinkware"},{name:"Sticker Pack",cat:"Accessories"}];
+  const stores=["Nashville","Atlanta","Chicago","Denver","Austin","Phoenix","Dallas","Seattle"];
+  const rows=[];
+  for(let m=0;m<6;m++){const month=`2025-${String(m+1).padStart(2,"0")}`;for(const s of stores){for(const p of products){if(Math.random()<0.7){const qty=Math.floor(1+Math.random()*15);rows.push({src:"revel",brand:"teg",name:p.name,category:p.cat,qty,total:round2(qty*(8+Math.random()*30)),date:month,store:s,uploaded_at:"2025-01-01T00:00:00Z"});}}}}
+  return{rows:rows.map(slimRow),savedAt:null,isDemo:true};
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+function App(){
+  const[auth,setAuth]=useState(false),[sheetsUrl,setSheetsUrlState]=useState(()=>getSheetsUrl());
+  const[showSetup,setShowSetup]=useState(false),[showUpload,setShowUpload]=useState(false),[showManage,setShowManage]=useState(false);
+  const[data,setData]=useState(null),[loading,setLoading]=useState(false),[loadError,setLoadError]=useState(null);
+  const[activeBrand,setActiveBrand]=useState("teg"),[isDemo,setIsDemo]=useState(false);
+
+  useEffect(()=>{if(!auth)return;const url=getSheetsUrl();if(!url){setShowSetup(true);return;}loadData(url);},[auth]);
+
+  const loadData=async url=>{
+    setLoading(true);setLoadError(null);
+    const local=getLocalData();if(local){setData(local);setIsDemo(false);}
+    try{const d=await loadFromSheets(url);if(d){setData(d);setLocalData(d);setIsDemo(false);}else if(!local)setShowUpload(true);}
+    catch(e){if(!local)setLoadError(`Could not load from Google Sheets: ${e.message}`);}
+    setLoading(false);
+  };
+
+  const handleSetupSave=url=>{setSheetsUrlState(url);setSheetsUrl(url);setShowSetup(false);loadData(url);};
+  const handleSetupSkip=()=>{setShowSetup(false);setData(generateMockData());setIsDemo(true);};
+  const handleUploadSave=d=>{setData(d);setLocalData(d);setIsDemo(false);setShowUpload(false);};
+  const handleClear=()=>{setData(null);setLocalData(null);setShowManage(false);};
+  const handleDisconnect=()=>{setSheetsUrlState("");setData(null);setLocalData(null);setShowManage(false);setShowSetup(true);};
+
+  if(!auth)return <PasswordGate onUnlock={()=>setAuth(true)}/>;
+
+  const allRows=data?expandRows(data.rows||[]):[];
+  const hasTeg=allRows.some(r=>r.brand==="teg"),hasGbgs=allRows.some(r=>r.brand==="gbgs"),hasAm=allRows.some(r=>r.brand==="am");
+  const brandTabs=[{id:"teg",label:"TEG",accent:"#E8294A",show:true},{id:"gbgs",label:"GBGS",accent:"#7C3AED",show:hasGbgs},{id:"am",label:"AM",accent:"#D4A017",show:hasAm}].filter(b=>b.show);
+  const fmt=d=>new Date(d).toLocaleString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"2-digit",minute:"2-digit"});
+
+  return(<div style={{minHeight:"100vh",background:DARK,fontFamily:"'DM Mono',monospace",color:"#fff"}}>
+    {showSetup&&<SetupModal onSave={handleSetupSave} onSkip={handleSetupSkip}/>}
+    {showUpload&&<UploadModal sheetsUrl={sheetsUrl} onSave={handleUploadSave} onClose={()=>setShowUpload(false)}/>}
+    {showManage&&<ManageModal sheetsUrl={sheetsUrl} savedAt={data?.savedAt} onClear={handleClear} onDisconnect={handleDisconnect} onClose={()=>setShowManage(false)}/>}
+
+    <div style={{background:CARD,borderBottom:`1px solid ${BORDER}`,padding:"0 32px",display:"flex",alignItems:"center",justifyContent:"space-between",height:56,position:"sticky",top:0,zIndex:50}}>
+      <div style={{display:"flex",alignItems:"center",gap:16}}>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:3}}>
+          <span style={{color:"#E8294A"}}>TEG</span><span style={{color:"#444",fontSize:16,margin:"0 6px"}}>/</span>
+          <span style={{color:"#7C3AED"}}>GBGS</span><span style={{color:"#444",fontSize:16,margin:"0 6px"}}>/</span>
+          <span style={{color:"#D4A017"}}>AM</span>
+        </div>
+        <div style={{width:1,height:20,background:BORDER}}/>
+        <div style={{fontSize:10,color:"#444",letterSpacing:2}}>MERCH DASHBOARD</div>
+        {isDemo&&<div style={{fontSize:9,color:"#D4A017",border:"1px solid #D4A01733",padding:"2px 8px",borderRadius:4}}>DEMO</div>}
+        {!isDemo&&data&&<div style={{fontSize:9,color:"#34D399",border:"1px solid #34D39933",padding:"2px 8px",borderRadius:4}}>● LIVE</div>}
+        {!isDemo&&data?.savedAt&&<div style={{fontSize:9,color:"#444"}}>Updated {fmt(data.savedAt)}</div>}
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        {sheetsUrl&&<button onClick={()=>loadData(sheetsUrl)} disabled={loading} style={{padding:"6px 12px",borderRadius:6,background:"transparent",border:`1px solid ${BORDER}`,color:"#666",fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>↻ REFRESH</button>}
+        <button onClick={()=>setShowManage(true)} style={{padding:"6px 12px",borderRadius:6,background:"transparent",border:`1px solid ${BORDER}`,color:"#666",fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>⚙ MANAGE</button>
+        <button onClick={()=>sheetsUrl?setShowUpload(true):setShowSetup(true)} style={{padding:"6px 14px",borderRadius:6,background:"transparent",border:`1px solid ${BORDER}`,color:"#888",fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>{sheetsUrl?"↑ ADD DATA":"⚙ SETUP"}</button>
+      </div>
+    </div>
+
+    {!loading&&!loadError&&data&&<div style={{background:CARD,borderBottom:`1px solid ${BORDER}`,padding:"0 32px",display:"flex",gap:4}}>
+      {brandTabs.map(b=>(
+        <button key={b.id} onClick={()=>setActiveBrand(b.id)} style={{padding:"10px 24px",background:"transparent",border:"none",borderBottom:`3px solid ${activeBrand===b.id?b.accent:"transparent"}`,color:activeBrand===b.id?b.accent:"#555",fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:3,cursor:"pointer",marginBottom:-1,transition:"all .15s"}}>{b.label}</button>
+      ))}
+    </div>}
+
+    {loading&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"calc(100vh - 56px)",flexDirection:"column",gap:16}}>
+      <div style={{width:32,height:32,border:"3px solid #222",borderTopColor:"#E8294A",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+      <div style={{fontSize:11,color:"#444"}}>Loading from Google Sheets…</div>
+    </div>}
+    {!loading&&loadError&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"calc(100vh - 56px)",flexDirection:"column",gap:16,padding:32}}>
+      <div style={{fontSize:12,color:"#ef4444",textAlign:"center",maxWidth:400}}>{loadError}</div>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={()=>setShowSetup(true)} style={{padding:"10px 20px",borderRadius:8,background:"transparent",border:`1px solid ${BORDER}`,color:"#666",fontFamily:"'DM Mono',monospace",fontSize:12,cursor:"pointer"}}>RECONFIGURE</button>
+        <button onClick={()=>{setLoadError(null);setData(generateMockData());setIsDemo(true);}} style={{padding:"10px 20px",borderRadius:8,background:"#E8294A",border:"none",color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:12,cursor:"pointer"}}>USE DEMO</button>
+      </div>
+    </div>}
+    {!loading&&!loadError&&!data&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"calc(100vh - 56px)",flexDirection:"column",gap:16}}>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:32,color:"#2A2A3A"}}>NO DATA YET</div>
+      <button onClick={()=>setShowUpload(true)} style={{padding:"12px 28px",borderRadius:8,background:"#E8294A",border:"none",color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:13,cursor:"pointer"}}>UPLOAD YOUR FIRST CSV</button>
+    </div>}
+    {!loading&&!loadError&&data&&<BrandView brand={activeBrand} allRows={allRows}/>}
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
