@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
 import * as XLSX from 'xlsx'
@@ -13,7 +12,7 @@ const CARD = "#111118"
 const BORDER = "#1E1E2E"
 const COLORS = ["#FF5C1A","#D4A017","#4ECDC4","#A78BFA","#F59E0B","#34D399","#F87171","#60A5FA","#FB923C","#A3E635"]
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbw-nv9rEdAMiYyLpxQRoFj7xqN1QmWO3kctUPWWIVyvNMUKGpmoQ8xYQeHT9MOjQSZd-Q/exec"
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbzDCaGn-jlykgVixhSvhyHnvff4fNkPB62EJDJYgU6Auz_bFvVfeBS4ZYS9oGrqLjYj/exec"
 
 const XOLA_PRICE_REF = {
   "winner shirt":25,"wheel shirt":25,"icon shirt":25,"chip shirt":25,"the heist":25,"ruins":25,"winner winner shirt":25,
@@ -145,9 +144,17 @@ async function sheetsCall(baseUrl, params = {}) {
   return json
 }
 
-async function loadFromSheets(url) {
-  const r = await sheetsCall(url, { action: "load" })
-  return r.data
+async function loadFromSheets(url, onProgress) {
+  let page = 0, allRR = [], allSR = [], totalPages = 1
+  do {
+    const r = await sheetsCall(url, { action: "load", page: String(page) })
+    allRR = [...allRR, ...(r.data.rr || [])]
+    allSR = [...allSR, ...(r.data.sr || [])]
+    totalPages = r.totalPages || 1
+    if (onProgress) onProgress(page + 1, totalPages)
+    page++
+  } while (page < totalPages)
+  return { rr: allRR, sr: allSR, ts: new Date().toISOString() }
 }
 
 async function saveToSheets(url, data) {
@@ -1134,7 +1141,10 @@ export default function App() {
   useEffect(()=>{
     if (!auth) return
     setLoading(true)
-    loadFromSheets(SHEETS_URL).then(raw=>{
+    loadFromSheets(SHEETS_URL, (pg, total) => {
+      setLoadErr(`Loading page ${pg} of ${total}…`)
+    }).then(raw=>{
+      setLoadErr("")
       setData(expand(raw)||{revelRows:[],resovaRows:[],savedAt:null})
       setLoading(false)
     }).catch(e=>{
