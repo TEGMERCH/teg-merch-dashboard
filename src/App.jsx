@@ -12,7 +12,7 @@ const CARD = "#111118"
 const BORDER = "#1E1E2E"
 const COLORS = ["#FF5C1A","#D4A017","#4ECDC4","#A78BFA","#F59E0B","#34D399","#F87171","#60A5FA","#FB923C","#A3E635"]
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbzDCaGn-jlykgVixhSvhyHnvff4fNkPB62EJDJYgU6Auz_bFvVfeBS4ZYS9oGrqLjYj/exec"
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbzQywPoDzjjFCHm2Kwi1LpKK6TxB0s-vJeHRxcwxbUujiIWOxL7n6aqe4CWHx9GkOAgiQ/exec"
 
 const XOLA_PRICE_REF = {
   "winner shirt":25,"wheel shirt":25,"icon shirt":25,"chip shirt":25,"the heist":25,"ruins":25,"winner winner shirt":25,
